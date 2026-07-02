@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>3D Web Game — Phase 1</title>
+
+<style>
+  /* ---------- RESET ---------- */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    user-select: none;
+  }
+
+  /* ---------- CANVAS ---------- */
+  #game-canvas {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    display: block;
+    outline: none;
+  }
+
+  /* ---------- HUD LAYER ---------- */
+  #hud {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    pointer-events: none; /* let clicks pass through to canvas */
+    z-index: 10;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  }
+
+  /* Top-left: Health */
+  #hud-health {
+    position: absolute;
+    top: 20px; left: 20px;
+    width: 260px;
+  }
+  #hud-health .label {
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0.85;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  #health-bar-bg {
+    width: 100%;
+    height: 18px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #health-bar-fill {
+    height: 100%;
+    width: 100%; /* driven by JS: element.style.width = pct + '%' */
+    background: linear-gradient(90deg, #ff3b3b, #ff8a3b);
+    transition: width 0.2s ease-out;
+  }
+  #health-value {
+    font-size: 12px;
+    margin-top: 4px;
+    opacity: 0.9;
+  }
+
+  /* Top-right: Score */
+  #hud-score {
+    position: absolute;
+    top: 20px; right: 20px;
+    text-align: right;
+  }
+  #hud-score .label {
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0.85;
+    text-transform: uppercase;
+  }
+  #score-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    margin-top: 2px;
+  }
+
+  /* Bottom-left: Controls / hints */
+  #hud-controls {
+    position: absolute;
+    bottom: 20px; left: 20px;
+    font-size: 12px;
+    line-height: 1.6;
+    background: rgba(0,0,0,0.35);
+    padding: 10px 14px;
+    border-radius: 6px;
+    max-width: 260px;
+  }
+  #hud-controls .title {
+    font-weight: 700;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 1px;
+    opacity: 0.8;
+  }
+
+  /* Center: crosshair (optional, hidden by default) */
+  #hud-crosshair {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 6px; height: 6px;
+    margin: -3px 0 0 -3px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.8);
+    display: none; /* toggle via JS if needed */
+  }
+
+  /* Bottom-center: Status / message log */
+  #hud-status {
+    position: absolute;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 16px;
+    border-radius: 4px;
+  }
+  #hud-status.visible { opacity: 1; }
+
+  /* Loading overlay */
+  #loading-screen {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    background: #0a0a0f;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    color: #fff;
+    transition: opacity 0.5s ease;
+  }
+  #loading-screen .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-screen .fade-out { opacity: 0; pointer-events: none; }
+
+  /* FPS / debug counter (top-center, optional) */
+  #hud-debug {
+    position: absolute;
+    top: 20px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    opacity: 0.6;
+    font-family: 'Courier New', monospace;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ================= LOADING SCREEN ================= -->
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <div id="loading-text">Initializing engine…</div>
+  </div>
+
+  <!-- ================= 3D CANVAS ================= -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- ================= HUD OVERLAY ================= -->
+  <div id="hud">
+    <div id="hud-health">
+      <div class="label">Health</div>
+      <div id="health-bar-bg">
+        <div id="health-bar-fill"></div>
+      </div>
+      <div id="health-value">100 / 100</div>
+    </div>
+
+    <div id="hud-score">
+      <div class="label">Score</div>
+      <div id="score-value">0</div>
+    </div>
+
+    <div id="hud-controls">
+      <div class="title">Controls</div>
+      <div>WASD — Move</div>
+      <div>Mouse — Look</div>
+      <div>Space — Jump</div>
+      <div>Shift — Sprint</div>
+      <div>Click — Lock Pointer</div>
+    </div>
+
+    <div id="hud-crosshair"></div>
+    <div id="hud-status"></div>
+    <div id="hud-debug">FPS: --</div>
+  </div>
+
+  <!-- ================= THREE.JS CDN ================= -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- ================= SHARED GLOBAL NAMESPACE ================= -->
+  <script>
+    /**
+     * GAME — shared global namespace across all modules.
+     * Every file (setup.js, mechanics.js, visuals.js) reads/writes to this
+     * single object instead of declaring its own top-level globals.
+     * This prevents variable collisions between AI-generated files.
+     *
+     * Populate/consume convention:
+     *  - setup.js       WRITES: scene, camera, renderer, clock, canvas
+     *  - mechanics.js   WRITES: player, state, input, entities; READS: scene/camera/renderer
+     *  - visuals.js     WRITES: lights, materials, particles; READS: scene/renderer
+     */
+    window.GAME = {
+      // --- core engine refs (set by setup.js) ---
+      scene: null,
+      camera: null,
+      renderer: null,
+      clock: null,
+      canvas: document.getElementById('game-canvas'),
+
+      // --- game state (set/updated by mechanics.js) ---
+      state: {
+        score: 0,
+        health: 100,
+        maxHealth: 100,
+        isRunning: false,
+        isPaused: false,
+        isGameOver: false
+      },
+
+      // --- input state (set/updated by mechanics.js) ---
+      input: {
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        jump: false,
+        sprint: false,
+        mouseX: 0,
+        mouseY: 0,
+        pointerLocked: false
+      },
+
+      // --- entity registry (players, enemies, pickups, etc.) ---
+      entities: {
+        player: null,
+        enemies: [],
+        pickups: [],
+        projectiles: []
+      },
+
+      // --- visuals registry (set by visuals.js) ---
+      visuals: {
+        lights: {},
+        materials: {},
+        particleSystems: []
+      },
+
+      // --- registered per-frame update callbacks ---
+      // Each module pushes a function(deltaTime) here; setup.js's animate loop calls them all.
+      updateCallbacks: [],
+      registerUpdate: function(fn) {
+        if (typeof fn === 'function') this.updateCallbacks.push(fn);
+      },
+
+      // --- HUD helper methods (safe to call from any module) ---
+      hud: {
+        setScore: function(value) {
+          const el = document.getElementById('score-value');
+          if (el) el.textContent = Math.floor(value);
+        },
+        setHealth: function(current, max) {
+          max = max || window.GAME.state.maxHealth;
+          const pct = Math.max(0, Math.min(100, (current / max) * 100));
+          const fill = document.getElementById('health-bar-fill');
+          const val = document.getElementById('health-value');
+          if (fill) fill.style.width = pct + '%';
+          if (val) val.textContent = Math.ceil(current) + ' / ' + max;
+        },
+        showStatus: function(message, durationMs) {
+          const el = document.getElementById('hud-status');
+          if (!el) return;
+          el.textContent = message;
+          el.classList.add('visible');
+          clearTimeout(el._hideTimeout);
+          el._hideTimeout = setTimeout(function() {
+            el.classList.remove('visible');
+          }, durationMs || 2000);
+        },
+        setDebug: function(text) {
+          const el = document.getElementById('hud-debug');
+          if (el) el.textContent = text;
+        },
+        hideLoadingScreen: function() {
+          const el = document.getElementById('loading-screen');
+          if (!el) return;
+          el.classList.add('fade-out');
+          setTimeout(function() { el.style.display = 'none'; }, 500);
+        },
+        setLoadingText: function(text) {
+          const el = document.getElementById('loading-text');
+          if (el) el.textContent = text;
+        }
+      }
+    };
+  </script>
+
+  <!-- ================= GAME MODULES ================= -->
+  <!-- Load order matters: setup (engine) -> visuals (scene dressing) -> mechanics (gameplay + loop start) -->
+  <script src="setup.js"></script>
+  <script src="visuals.js"></script>
+  <script src="mechanics.js"></script>
+
+</body>
+</html>
