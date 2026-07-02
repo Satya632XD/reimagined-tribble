@@ -128,10 +128,38 @@
     var colliders = [];
     var i;
     if (!raw || !raw.length) return colliders;
+
+    // Brute force is fine for this small obstacle count; revisit if this grows past ~50 colliders.
     for (i = 0; i < raw.length; i++) {
       if (raw[i] && raw[i].isBox3) colliders.push(raw[i]);
     }
     return colliders;
+  }
+
+  function getPlayerBoxAt(posX, posY, posZ) {
+    var halfWidth = 0.4;
+    return new THREE.Box3(
+      new THREE.Vector3(posX - halfWidth, posY - PLAYER_HALF_HEIGHT, posZ - halfWidth),
+      new THREE.Vector3(posX + halfWidth, posY + PLAYER_HALF_HEIGHT, posZ + halfWidth)
+    );
+  }
+
+  function playerBoxOverlapsAnyCollider(playerBox, colliders) {
+    var i;
+    for (i = 0; i < colliders.length; i++) {
+      if (colliders[i] && playerBox.intersectsBox(colliders[i])) return true;
+    }
+    return false;
+  }
+
+  function playerBoxOverlapsColliderXZ(playerBox, collider) {
+    if (!collider) return false;
+    return (
+      playerBox.max.x >= collider.min.x &&
+      playerBox.min.x <= collider.max.x &&
+      playerBox.max.z >= collider.min.z &&
+      playerBox.min.z <= collider.max.z
+    );
   }
 
   function isPointBlocked(x, z, colliders, padding) {
@@ -333,6 +361,52 @@
     }
   }
 
+  function resolveHorizontalCollision(startX, startZ) {
+    var colliders = getColliders();
+    var testBox;
+
+    if (player.position.x !== startX) {
+      testBox = getPlayerBoxAt(player.position.x, player.position.y, startZ);
+      if (playerBoxOverlapsAnyCollider(testBox, colliders)) player.position.x = startX;
+    }
+
+    if (player.position.z !== startZ) {
+      testBox = getPlayerBoxAt(player.position.x, player.position.y, player.position.z);
+      if (playerBoxOverlapsAnyCollider(testBox, colliders)) player.position.z = startZ;
+    }
+  }
+
+  function resolveObstacleLanding(startY) {
+    var colliders = getColliders();
+    var playerBox = getPlayerBoxAt(player.position.x, player.position.y, player.position.z);
+    var previousBottom = startY - PLAYER_HALF_HEIGHT;
+    var currentBottom = player.position.y - PLAYER_HALF_HEIGHT;
+    var bestTop = -Infinity;
+    var i, box;
+
+    if (player.velocity.y > 0) return false;
+
+    for (i = 0; i < colliders.length; i++) {
+      box = colliders[i];
+      if (!box) continue;
+
+      if (!playerBoxOverlapsColliderXZ(playerBox, box)) continue;
+
+      if (previousBottom >= box.max.y && currentBottom <= box.max.y) {
+        if (box.max.y > bestTop) bestTop = box.max.y;
+      }
+    }
+
+    if (bestTop > -Infinity) {
+      player.position.y = bestTop + PLAYER_HALF_HEIGHT;
+      if (player.velocity.y < 0) player.velocity.y = 0;
+      player.grounded = true;
+      return true;
+    }
+
+    return false;
+  }
+
   function updatePlayer(deltaTime) {
     if (!player || GAME.state.isPaused || GAME.state.isGameOver || GAME.state.isGameWon) return;
 
@@ -350,6 +424,10 @@
     if (GAME.input.left) moveX -= 1;
     if (GAME.input.right) moveX += 1;
 
+    var startX = player.position.x;
+    var startZ = player.position.z;
+    var startY = player.position.y;
+
     if (moveX !== 0 || moveZ !== 0) {
       var length = Math.sqrt(moveX * moveX + moveZ * moveZ);
       var speed, sinYaw, cosYaw, worldMoveX, worldMoveZ;
@@ -365,6 +443,8 @@
 
       player.position.x += worldMoveX * speed * deltaTime;
       player.position.z += worldMoveZ * speed * deltaTime;
+
+      resolveHorizontalCollision(startX, startZ);
     }
 
     if (GAME.input.jump && player.grounded && !player.jumpConsumed) {
@@ -374,13 +454,16 @@
       if (GAME.hud && typeof GAME.hud.showStatus === 'function') GAME.hud.showStatus('Jump!', 500);
     }
 
+    player.grounded = false;
     player.velocity.y += GRAVITY * deltaTime;
     player.position.y += player.velocity.y * deltaTime;
 
-    if (player.position.y <= GROUND_Y) {
-      player.position.y = GROUND_Y;
-      if (player.velocity.y < 0) player.velocity.y = 0;
-      player.grounded = true;
+    if (!resolveObstacleLanding(startY)) {
+      if (player.position.y <= GROUND_Y) {
+        player.position.y = GROUND_Y;
+        if (player.velocity.y < 0) player.velocity.y = 0;
+        player.grounded = true;
+      }
     }
 
     GAME.camera.position.set(player.position.x, player.position.y + EYE_OFFSET, player.position.z);
